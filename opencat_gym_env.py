@@ -72,7 +72,7 @@ class OpenCatGymEnv(gym.Env):
                                      cameraTargetPosition=[0.4,0,0])
 
         # Apenas 6 motores (sem a pata dianteira esquerda: índices 0 e 1)
-        self.joints_to_control = [0, 1, 4, 5, 6, 7]
+        self.joints_to_control = [0, 1, 2, 3, 4, 5, 6, 7]
         self.action_space = gym.spaces.Box(np.array([-1]*6), np.array([1]*6), dtype=np.float32)
         self.observation_space = gym.spaces.Box(np.array([-1]*SIZE_OBSERVATION),
                                                 np.array([1]*SIZE_OBSERVATION), dtype=np.float32)
@@ -104,7 +104,7 @@ class OpenCatGymEnv(gym.Env):
         p.stepSimulation()
 
         # Ignora a pata dianteira esquerda no contato e clearance
-        paw_idx = [3, 9, 12]  # Sem a 3 (dianteira esquerda)
+        paw_idx = [ 3, 6, 9, 12]  # Sem a 3 (dianteira esquerda)
         paw_slipping = 0
         paw_clearance = 0
         for idx in paw_idx:
@@ -116,7 +116,7 @@ class OpenCatGymEnv(gym.Env):
                 paw_clearance += (paw_z_pos - PAW_Z_TARGET)**2 * np.linalg.norm(vel)**0.5
 
         # Ignora braço esquerdo nos contatos
-        arm_idx = [0, 4, 5]  # Sem os índices 0 e 1
+        arm_idx = [0, 2, 4, 5]  # Sem os índices 0 e 1
         for idx in arm_idx:
             if p.getContactPoints(bodyA=self.robot_id, linkIndexA=idx):
                 self.arm_contact += 1

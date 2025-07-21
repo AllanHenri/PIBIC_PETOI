@@ -1,8 +1,8 @@
+
 import gymnasium as gym
 import numpy as np
 import pybullet as p
 import pybullet_data
-import time
 
 
 # Constants to define training and visualisation.
@@ -46,81 +46,96 @@ class OpenCatGymEnv(gym.Env):
 
     metadata = {'render.modes': ['human']}
 
-class OpenCatGymEnv(gym.Env):
-    metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
-
-class OpenCatGymEnv(gym.Env):
-    metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
-
-    def __init__(self, render_mode=None):
-        self.render_mode = render_mode
+    def __init__(self):
         self.step_counter = 0
         self.step_counter_session = 0
         self.state_history = np.array([])
         self.angle_history = np.array([])
         self.bound_ang = np.deg2rad(BOUND_ANG)
 
-        if self.render_mode == "human":
+        if GUI_MODE:
             p.connect(p.GUI)
+            # Uncommend to create a video.
+            #video_options = ("--width=960 --height=540 
+            #                + "--mp4=\"training.mp4\" --mp4fps=60")
+            #p.connect(p.GUI, options=video_options) 
         else:
+            # Use for training without visualisation (significantly faster).
             p.connect(p.DIRECT)
 
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-        p.resetDebugVisualizerCamera(cameraDistance=0.5,
-                                     cameraYaw=-170,
-                                     cameraPitch=-40,
+        p.resetDebugVisualizerCamera(cameraDistance=0.5, 
+                                     cameraYaw=-170, 
+                                     cameraPitch=-40, 
                                      cameraTargetPosition=[0.4,0,0])
 
-        # Apenas 6 motores (sem a pata dianteira esquerda: índices 0 e 1)
-        self.joints_to_control = [0, 1, 2, 3, 4, 5, 6, 7]
-        self.action_space = gym.spaces.Box(np.array([-1]*6), np.array([1]*6), dtype=np.float32)
-        self.observation_space = gym.spaces.Box(np.array([-1]*SIZE_OBSERVATION),
-                                                np.array([1]*SIZE_OBSERVATION), dtype=np.float32)
+        # The action space are the 8 joint angles.
+        self.action_space = gym.spaces.Box(np.array([-1]*8), np.array([1]*8))
+
+        # The observation space are the torso roll, pitch and the 
+        # angular velocities and a history of the last 30 joint angles.
+        self.observation_space = gym.spaces.Box(np.array([-1]*SIZE_OBSERVATION), 
+                                                np.array([1]*SIZE_OBSERVATION))
 
 
     def step(self, action):
         p.configureDebugVisualizer(p.COV_ENABLE_SINGLE_STEP_RENDERING)
         last_position = p.getBasePositionAndOrientation(self.robot_id)[0][0]
-        joint_angs = np.asarray(p.getJointStates(self.robot_id, self.joint_id), dtype=object)[:, 0]
-        ds = np.deg2rad(STEP_ANGLE)
+        joint_angs = np.asarray(p.getJointStates(self.robot_id, self.joint_id),
+                                                   dtype=object)[:,0]
+        ds = np.deg2rad(STEP_ANGLE) # Maximum change of angle per step
+        joint_angs += action * ds # Change per step including agent action
 
-        # Aplica ação apenas nas juntas que controlamos (6 motores)
-        for i, j_idx in enumerate(self.joints_to_control):
-            joint_angs[j_idx] += action[i] * ds
-            joint_angs[j_idx] = np.clip(joint_angs[j_idx], -self.bound_ang, self.bound_ang)
+        # Apply joint boundaries individually.
+        min_ang = -self.bound_ang
+        max_ang = self.bound_ang
+        joint_angs[0] = np.clip(joint_angs[0], min_ang, max_ang) # shoulder_left
+        joint_angs[1] = np.clip(joint_angs[1], min_ang, max_ang) # elbow_left
+        joint_angs[2] = np.clip(joint_angs[2], min_ang, max_ang) # shoulder_right
+        joint_angs[3] = np.clip(joint_angs[3], min_ang, max_ang) # elbow_right
+        joint_angs[4] = np.clip(joint_angs[4], min_ang, max_ang) # hip_right
+        joint_angs[5] = np.clip(joint_angs[5], min_ang, max_ang) # knee_right
+        joint_angs[6] = np.clip(joint_angs[6], min_ang, max_ang) # hip_left
+        joint_angs[7] = np.clip(joint_angs[7], min_ang, max_ang) # knee_left
 
-        # Trava as juntas da pata removida
-        joint_angs[0] = 0  # shoulder_left
-        joint_angs[1] = 0  # elbow_left
+        # Transform angle to degree and perform rounding, because 
+        # OpenCat robot have only integer values.
+        joint_angsDeg = np.rad2deg(joint_angs.astype(np.float64))
+        joint_angsDegRounded = joint_angsDeg.round()
+        joint_angs = np.deg2rad(joint_angsDegRounded)
 
-        joint_angsDeg = np.rad2deg(joint_angs.astype(np.float64)).round()
-        joint_angs = np.deg2rad(joint_angsDeg)
-
-        p.setJointMotorControlArray(self.robot_id,
-                                    self.joint_id,
-                                    p.POSITION_CONTROL,
-                                    joint_angs,
-                                    forces=np.ones(8) * 0.2)
+        # Simulate delay for data transfer. Delay has to be modeled to close 
+        # "reality gap").
         p.stepSimulation()
 
-        # Ignora a pata dianteira esquerda no contato e clearance
-        paw_idx = [ 3, 6, 9, 12]  # Sem a 3 (dianteira esquerda)
+        # Check for friction of paws, to prevent slipping while training.
+        paw_contact = []
+        paw_idx = [3, 6, 9, 12]
+        for idx in paw_idx:
+            paw_contact.append(True if p.getContactPoints(bodyA=self.robot_id, 
+                                                          linkIndexA=idx) 
+                                    else False)
+
         paw_slipping = 0
+        for in_contact in np.nonzero(paw_contact)[0]:
+            paw_slipping += np.linalg.norm((
+                            p.getLinkState(self.robot_id,
+                                           linkIndex=paw_idx[in_contact], 
+                                           computeLinkVelocity=1)[0][0:1]))
+
+        # Read clearance of paw from ground
         paw_clearance = 0
         for idx in paw_idx:
-            contacts = p.getContactPoints(bodyA=self.robot_id, linkIndexA=idx)
-            if contacts:
-                vel = p.getLinkState(self.robot_id, linkIndex=idx, computeLinkVelocity=1)[0][0:1]
-                paw_slipping += np.linalg.norm(vel)
-                paw_z_pos = p.getLinkState(self.robot_id, linkIndex=idx)[0][2]
-                paw_clearance += (paw_z_pos - PAW_Z_TARGET)**2 * np.linalg.norm(vel)**0.5
+            paw_z_pos = p.getLinkState(self.robot_id, linkIndex=idx)[0][2]
+            paw_clearance += (paw_z_pos-PAW_Z_TARGET)**2 * np.linalg.norm(
+                (p.getLinkState(self.robot_id, linkIndex=idx, 
+                                computeLinkVelocity=1)[0][0:1]))**0.5
 
-        # Ignora braço esquerdo nos contatos
-        arm_idx = [0, 2, 4, 5]  # Sem os índices 0 e 1
+        # Check if elbows or lower arm are in contact with ground
+        arm_idx = [1, 2, 4, 5]
         for idx in arm_idx:
             if p.getContactPoints(bodyA=self.robot_id, linkIndexA=idx):
                 self.arm_contact += 1
-
 
         # Read clearance of torso from ground
         base_clearance = p.getBasePositionAndOrientation(self.robot_id)[0][2]
@@ -208,7 +223,8 @@ class OpenCatGymEnv(gym.Env):
 
         self.observation = np.hstack((self.state_robot, self.angle_history))
 
-        return (np.array(self.observation).astype(np.float32), reward, terminated, truncated, info)
+        return (np.array(self.observation).astype(np.float32), 
+                        reward, terminated, truncated, info)
 
 
     def reset(self, seed=None, options=None):
@@ -285,8 +301,7 @@ class OpenCatGymEnv(gym.Env):
 
 
     def render(self, mode='human'):
-        if self.render_mode == "human":
-            time.sleep(1. / 60)
+        pass
 
 
     def close(self):
@@ -294,11 +309,21 @@ class OpenCatGymEnv(gym.Env):
 
 
     def is_fallen(self):
+        """ Check if robot is fallen. It becomes "True", 
+            when pitch or roll is more than 1.3 rad.
+        """
         pos, orient = p.getBasePositionAndOrientation(self.robot_id)
         orient = p.getEulerFromQuaternion(orient)
-        return (np.fabs(orient[0]) > 1.3 or np.fabs(orient[1]) > 1.3)
+        is_fallen = (np.fabs(orient[0]) > 1.3 
+                    or np.fabs(orient[1]) > 1.3)
+
+        return is_fallen
 
 
     def randomize(self, value, percentage):
+        """ Randomize value within percentage boundaries.
+        """
         percentage /= 100
-        return value * (1 + percentage * (2 * np.random.rand() - 1))
+        value_randomized = value * (1 + percentage*(2*np.random.rand()-1))
+
+        return value_randomized

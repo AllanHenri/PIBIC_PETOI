@@ -2,10 +2,16 @@ import time
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import get_schedule_fn
+
+import opencat_gym_env
+# Ativa o modo GUI do PyBullet antes de instanciar o ambiente
+opencat_gym_env.GUI_MODE = True      
+
 from opencat_gym_env import OpenCatGymEnv
 
 def make_env():
-    return OpenCatGymEnv(render_mode="human")
+    # Agora instanciamos sem passar render_mode
+    return OpenCatGymEnv()
 
 env = DummyVecEnv([make_env])
 
@@ -16,10 +22,12 @@ custom_objects = {
 
 policy_kwargs = dict(net_arch=[256, 256])
 
-model = PPO.load("trained/opencat_gym_esp32_trained_controller",
-                 env=env,
-                 custom_objects=custom_objects,
-                 policy_kwargs=policy_kwargs)
+model = PPO.load(
+    "trained/opencat_gym_esp32_trained_controller",
+    env=env,
+    custom_objects=custom_objects,
+    policy_kwargs=policy_kwargs
+)
 
 obs = env.reset()
 sum_reward = 0

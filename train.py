@@ -2,7 +2,7 @@ import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecNormalize
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 import matplotlib.pyplot as plt
 from opencat_gym_env import OpenCatGymEnv
@@ -28,6 +28,8 @@ if __name__ == "__main__":
     parallel_env = 8
     env_fns = [make_monitored_env(i, LOG_DIR) for i in range(parallel_env)]
     env = SubprocVecEnv(env_fns)
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.)
+
 
     # 2) Definição da arquitetura customizada e do agente
     policy_kwargs = dict(net_arch=[256, 256])

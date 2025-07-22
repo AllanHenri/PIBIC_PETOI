@@ -1,4 +1,3 @@
-
 import gymnasium as gym
 import numpy as np
 import pybullet as p
@@ -53,6 +52,8 @@ class OpenCatGymEnv(gym.Env):
         self.angle_history = np.array([])
         self.bound_ang = np.deg2rad(BOUND_ANG)
 
+        self.locked_joint_idx = [2,3]
+        self.locked_angles = None
         if GUI_MODE:
             p.connect(p.GUI)
             # Uncommend to create a video.
@@ -85,19 +86,18 @@ class OpenCatGymEnv(gym.Env):
                                                    dtype=object)[:,0]
         ds = np.deg2rad(STEP_ANGLE) # Maximum change of angle per step
         joint_angs += action * ds # Change per step including agent action
+        
+        if self.locked_angles is not None:
+            for i, idx in enumerate(self.locked_joint_idx):
+                joint_angs[idx] = self.locked_angles[i]
 
         # Apply joint boundaries individually.
         min_ang = -self.bound_ang
         max_ang = self.bound_ang
-        joint_angs[0] = np.clip(joint_angs[0], min_ang, max_ang) # shoulder_left
-        joint_angs[1] = np.clip(joint_angs[1], min_ang, max_ang) # elbow_left
-        joint_angs[2] = np.clip(joint_angs[2], min_ang, max_ang) # shoulder_right
-        joint_angs[3] = np.clip(joint_angs[3], min_ang, max_ang) # elbow_right
-        joint_angs[4] = np.clip(joint_angs[4], min_ang, max_ang) # hip_right
-        joint_angs[5] = np.clip(joint_angs[5], min_ang, max_ang) # knee_right
-        joint_angs[6] = np.clip(joint_angs[6], min_ang, max_ang) # hip_left
-        joint_angs[7] = np.clip(joint_angs[7], min_ang, max_ang) # knee_left
-
+        for idx in range(len(joint_angs)):
+            joint_angs[idx] = np.clip(joint_angs[idx], min_ang, max_ang)
+        
+        
         # Transform angle to degree and perform rounding, because 
         # OpenCat robot have only integer values.
         joint_angsDeg = np.rad2deg(joint_angs.astype(np.float64))
@@ -149,14 +149,7 @@ class OpenCatGymEnv(gym.Env):
         p.stepSimulation() # Delay of data transfer
 
         # Normalize joint_angs
-        joint_angs[0] /= self.bound_ang
-        joint_angs[1] /= self.bound_ang
-        joint_angs[2] /= self.bound_ang
-        joint_angs[3] /= self.bound_ang
-        joint_angs[4] /= self.bound_ang
-        joint_angs[5] /= self.bound_ang
-        joint_angs[6] /= self.bound_ang
-        joint_angs[7] /= self.bound_ang
+        joint_angs /= self.bound_ang
 
         # Adding every 2nd angle to the joint angle history.
         if(self.step_counter % 2 == 0):
@@ -269,15 +262,10 @@ class OpenCatGymEnv(gym.Env):
             p.resetJointState(self.robot_id,j, joint_angs[i])
             i = i+1
 
+        self.locked_angles = joint_angs[self.locked_joint_idx].copy()
+
         # Normalize joint angles.
-        joint_angs[0] /= self.bound_ang
-        joint_angs[1] /= self.bound_ang
-        joint_angs[2] /= self.bound_ang
-        joint_angs[3] /= self.bound_ang
-        joint_angs[4] /= self.bound_ang
-        joint_angs[5] /= self.bound_ang
-        joint_angs[6] /= self.bound_ang
-        joint_angs[7] /= self.bound_ang
+        joint_angs /= self.bound_ang
 
         # Read robot state (pitch, roll and their derivatives of the torso)
         state_ang = p.getBasePositionAndOrientation(self.robot_id)[1]

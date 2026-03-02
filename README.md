@@ -44,3 +44,42 @@ The API for creating the training environment: https://gymnasium.farama.org/
 ## Related Work
 The reward and penalty functions are based on: https://www.nature.com/articles/s41598-023-38259-7 \
 Including a joint angle history was inspired by: https://www.science.org/doi/10.1126/scirobotics.aau5872
+
+## Fault injection (joint lock / motor failure) and diagnostics
+You can now configure faults directly when creating the environment and also collect diagnostics for analysis.
+
+```python
+from opencat_gym_env import OpenCatGymEnv
+
+fault_config = {
+    "locked_joints": {0: 30, 1: 45},      # keep these joints fixed in degrees
+    "disabled_motors": [4],               # motor 4 fully off
+    "motor_strength_scale": {6: 0.5},     # motor 6 with 50% strength
+}
+
+env = OpenCatGymEnv(
+    render_mode="human",
+    fault_config=fault_config,
+    collect_diagnostics=True,
+)
+
+obs, info = env.reset()
+# ... rollout ...
+
+# step() info contains per-step metrics:
+# paw_contact, paw_slipping, paw_clearance, arm_contact, fault_config
+
+diagnostics = env.get_diagnostics()  # list of dicts with step/reward/x_position/etc.
+```
+
+You can also override the fault setup at reset time:
+
+```python
+obs, info = env.reset(options={
+    "fault_config": {
+        "locked_joints": {2: 20},
+        "disabled_motors": [7],
+        "motor_strength_scale": {5: 0.2},
+    }
+})
+```

@@ -33,11 +33,19 @@ LENGTH_RECENT_ANGLES = 3
 LENGTH_JOINT_HISTORY = 30
 SIZE_OBSERVATION = LENGTH_JOINT_HISTORY * 8 + 6
 
+DEFAULT_FAULT_CONFIG = {
+    'locked_joints': {0: 30.0, 1: 45.0},  # joint_index -> angle_degrees
+    'disabled_motors': [],                # list of joint indices
+    'motor_strength_scale': {},           # joint_index -> scale (0..1+)
+}
+
 class OpenCatGymEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, fault_config=None, collect_diagnostics=False):
         self.render_mode = render_mode
+        self.collect_diagnostics = collect_diagnostics
+        self.fault_config = self._merge_fault_config(fault_config)
         self.step_counter = 0
         self.step_counter_session = 0
         self.state_history = np.array([])
@@ -54,6 +62,7 @@ class OpenCatGymEnv(gym.Env):
 
         self.action_space = gym.spaces.Box(np.array([-1]*8), np.array([1]*8))
         self.observation_space = gym.spaces.Box(np.array([-1]*SIZE_OBSERVATION), np.array([1]*SIZE_OBSERVATION))
+        self.diagnostics_history = []
 
     def step(self, action):
         p.configureDebugVisualizer(p.COV_ENABLE_SINGLE_STEP_RENDERING)
@@ -61,13 +70,8 @@ class OpenCatGymEnv(gym.Env):
         joint_angs = np.asarray(p.getJointStates(self.robot_id, self.joint_id), dtype=object)[:,0]
         ds = np.deg2rad(STEP_ANGLE)
 
-        # === TRAVAR PATA DIANTEIRA ESQUERDA ===
-        locked_shoulder_angle = np.deg2rad(30)
-        locked_elbow_angle = np.deg2rad(45)
-        joint_angs[0] = locked_shoulder_angle
-        joint_angs[1] = locked_elbow_angle
-        action[0] = 0
-        action[1] = 0
+        action = np.array(action, dtype=np.float64, copy=True)
+        joint_angs = self._apply_faults_to_action(joint_angs, action)
 
         joint_angs += action * ds
 
@@ -107,7 +111,8 @@ class OpenCatGymEnv(gym.Env):
 
         base_clearance = p.getBasePositionAndOrientation(self.robot_id)[0][2]
 
-        p.setJointMotorControlArray(self.robot_id, self.joint_id, p.POSITION_CONTROL, joint_angs, forces=np.ones(8)*0.2)
+        motor_forces = self._build_motor_forces()
+        p.setJointMotorControlArray(self.robot_id, self.joint_id, p.POSITION_CONTROL, joint_angs, forces=motor_forces)
         p.stepSimulation()
 
         for i in range(8):
@@ -140,7 +145,13 @@ class OpenCatGymEnv(gym.Env):
 
         terminated = False
         truncated = False
-        info = {}
+        info = {
+            'paw_contact': paw_contact,
+            'paw_slipping': paw_slipping,
+            'paw_clearance': paw_clearance,
+            'arm_contact': self.arm_contact,
+            'fault_config': self.fault_config,
+        }
 
         self.step_counter += 1
         if self.step_counter > EPISODE_LENGTH:
@@ -153,11 +164,22 @@ class OpenCatGymEnv(gym.Env):
             terminated = True
             truncated = False
 
+        if self.collect_diagnostics:
+            self.diagnostics_history.append({
+                'step': self.step_counter,
+                'reward': reward,
+                'x_position': current_position,
+                'paw_slipping': paw_slipping,
+                'paw_clearance': paw_clearance,
+            })
+
         self.observation = np.hstack((self.state_robot, self.angle_history))
         return (np.array(self.observation).astype(np.float32), reward, terminated, truncated, info)
 
     def reset(self, seed=None, options=None):
         self.step_counter = 0
+        if options and 'fault_config' in options:
+            self.fault_config = self._merge_fault_config(options['fault_config'])
         self.arm_contact = 0
         p.resetSimulation()
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING,0)
@@ -211,8 +233,48 @@ class OpenCatGymEnv(gym.Env):
         self.recent_angles = np.tile(state_joints, LENGTH_RECENT_ANGLES)
         self.observation = np.concatenate((self.state_robot, self.angle_history))
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING,1)
-        info = {}
+        self.diagnostics_history = []
+        info = {'fault_config': self.fault_config}
         return np.array(self.observation).astype(np.float32), info
+
+
+    def _merge_fault_config(self, fault_config):
+        merged = {
+            'locked_joints': dict(DEFAULT_FAULT_CONFIG['locked_joints']),
+            'disabled_motors': list(DEFAULT_FAULT_CONFIG['disabled_motors']),
+            'motor_strength_scale': dict(DEFAULT_FAULT_CONFIG['motor_strength_scale']),
+        }
+        if fault_config is None:
+            return merged
+
+        if 'locked_joints' in fault_config:
+            merged['locked_joints'] = {int(k): float(v) for k, v in fault_config['locked_joints'].items()}
+        if 'disabled_motors' in fault_config:
+            merged['disabled_motors'] = [int(i) for i in fault_config['disabled_motors']]
+        if 'motor_strength_scale' in fault_config:
+            merged['motor_strength_scale'] = {int(k): float(v) for k, v in fault_config['motor_strength_scale'].items()}
+        return merged
+
+    def _apply_faults_to_action(self, joint_angs, action):
+        for joint_idx, locked_deg in self.fault_config['locked_joints'].items():
+            joint_angs[joint_idx] = np.deg2rad(locked_deg)
+            action[joint_idx] = 0
+
+        for joint_idx in self.fault_config['disabled_motors']:
+            action[joint_idx] = 0
+
+        return joint_angs
+
+    def _build_motor_forces(self):
+        forces = np.ones(8) * 0.2
+        for joint_idx in self.fault_config['disabled_motors']:
+            forces[joint_idx] = 0.0
+        for joint_idx, scale in self.fault_config['motor_strength_scale'].items():
+            forces[joint_idx] *= scale
+        return forces
+
+    def get_diagnostics(self):
+        return list(self.diagnostics_history)
 
     def render(self, mode='human'):
         pass

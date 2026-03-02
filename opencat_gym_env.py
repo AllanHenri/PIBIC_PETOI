@@ -34,16 +34,17 @@ LENGTH_JOINT_HISTORY = 30
 SIZE_OBSERVATION = LENGTH_JOINT_HISTORY * 8 + 6
 
 class OpenCatGymEnv(gym.Env):
-    metadata = {'render.modes': ['human']}
+    metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self):
+    def __init__(self, render_mode=None):
+        self.render_mode = render_mode
         self.step_counter = 0
         self.step_counter_session = 0
         self.state_history = np.array([])
         self.angle_history = np.array([])
         self.bound_ang = np.deg2rad(BOUND_ANG)
 
-        if GUI_MODE:
+        if self.render_mode == 'human' or GUI_MODE:
             p.connect(p.GUI)
         else:
             p.connect(p.DIRECT)

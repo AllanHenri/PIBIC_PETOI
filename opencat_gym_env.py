@@ -88,12 +88,16 @@ class OpenCatGymEnv(gym.Env):
 
         paw_slipping = 0
         for in_contact in np.nonzero(paw_contact)[0]:
-            paw_slipping += np.linalg.norm((p.getLinkState(self.robot_id, linkIndex=paw_idx[in_contact], computeLinkVelocity=1)[0][0:1]))
+            link_state = p.getLinkState(self.robot_id, linkIndex=paw_idx[in_contact], computeLinkVelocity=1)
+            paw_linear_velocity_xy = np.asarray(link_state[6][0:2])
+            paw_slipping += np.linalg.norm(paw_linear_velocity_xy)
 
         paw_clearance = 0
         for idx in paw_idx:
-            paw_z_pos = p.getLinkState(self.robot_id, linkIndex=idx)[0][2]
-            paw_clearance += (paw_z_pos-PAW_Z_TARGET)**2 * np.linalg.norm((p.getLinkState(self.robot_id, linkIndex=idx, computeLinkVelocity=1)[0][0:1]))**0.5
+            link_state = p.getLinkState(self.robot_id, linkIndex=idx, computeLinkVelocity=1)
+            paw_z_pos = link_state[0][2]
+            paw_linear_velocity_xy = np.asarray(link_state[6][0:2])
+            paw_clearance += (paw_z_pos-PAW_Z_TARGET)**2 * np.linalg.norm(paw_linear_velocity_xy)**0.5
 
         arm_idx = [1, 2, 4, 5]
         for idx in arm_idx:

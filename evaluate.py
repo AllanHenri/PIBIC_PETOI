@@ -10,8 +10,7 @@ opencat_gym_env.GUI_MODE = True
 from opencat_gym_env import OpenCatGymEnv
 
 def make_env():
-    # Agora instanciamos sem passar render_mode
-    return OpenCatGymEnv()
+    return OpenCatGymEnv(render_mode='human')
 
 env = DummyVecEnv([make_env])
 

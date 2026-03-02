@@ -34,16 +34,17 @@ LENGTH_JOINT_HISTORY = 30
 SIZE_OBSERVATION = LENGTH_JOINT_HISTORY * 8 + 6
 
 class OpenCatGymEnv(gym.Env):
-    metadata = {'render.modes': ['human']}
+    metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self):
+    def __init__(self, render_mode=None):
+        self.render_mode = render_mode
         self.step_counter = 0
         self.step_counter_session = 0
         self.state_history = np.array([])
         self.angle_history = np.array([])
         self.bound_ang = np.deg2rad(BOUND_ANG)
 
-        if GUI_MODE:
+        if self.render_mode == 'human' or GUI_MODE:
             p.connect(p.GUI)
         else:
             p.connect(p.DIRECT)
@@ -88,12 +89,16 @@ class OpenCatGymEnv(gym.Env):
 
         paw_slipping = 0
         for in_contact in np.nonzero(paw_contact)[0]:
-            paw_slipping += np.linalg.norm((p.getLinkState(self.robot_id, linkIndex=paw_idx[in_contact], computeLinkVelocity=1)[0][0:1]))
+            link_state = p.getLinkState(self.robot_id, linkIndex=paw_idx[in_contact], computeLinkVelocity=1)
+            paw_linear_velocity_xy = np.asarray(link_state[6][0:2])
+            paw_slipping += np.linalg.norm(paw_linear_velocity_xy)
 
         paw_clearance = 0
         for idx in paw_idx:
-            paw_z_pos = p.getLinkState(self.robot_id, linkIndex=idx)[0][2]
-            paw_clearance += (paw_z_pos-PAW_Z_TARGET)**2 * np.linalg.norm((p.getLinkState(self.robot_id, linkIndex=idx, computeLinkVelocity=1)[0][0:1]))**0.5
+            link_state = p.getLinkState(self.robot_id, linkIndex=idx, computeLinkVelocity=1)
+            paw_z_pos = link_state[0][2]
+            paw_linear_velocity_xy = np.asarray(link_state[6][0:2])
+            paw_clearance += (paw_z_pos-PAW_Z_TARGET)**2 * np.linalg.norm(paw_linear_velocity_xy)**0.5
 
         arm_idx = [1, 2, 4, 5]
         for idx in arm_idx:
